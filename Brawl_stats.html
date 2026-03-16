@@ -89,7 +89,7 @@
         <div class="card">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                 <h3 style="margin: 0;">История пуша</h3>
-                <select id="sortSelect" onchange="renderTable()">
+                <select id="sortSelect">
                     <option value="date_desc">По дате (Сначала новые)</option>
                     <option value="date_asc">По дате (Сначала старые)</option>
                     <option value="growth_desc">По приросту (От большего)</option>
@@ -132,16 +132,12 @@
         let chartInstance = null;
         let currentUser = null;
 
-        // Авторизация с сохранением сессии
         window.handleAuth = async (type) => {
             const email = document.getElementById('email').value;
             const pass = document.getElementById('pass').value;
             if(!email || !pass) return alert("Введите почту и пароль");
-            
             try {
-                // Заставляем Firebase запомнить нас в этом браузере
                 await setPersistence(auth, browserLocalPersistence);
-                
                 if(type === 'login') await signInWithEmailAndPassword(auth, email, pass);
                 else await createUserWithEmailAndPassword(auth, email, pass);
             } catch (e) { alert("Ошибка: " + e.message); }
@@ -150,23 +146,19 @@
         window.logout = () => {
             signOut(auth).then(() => {
                 records = [];
-                renderTable();
-                renderChart();
+                updateUI(false);
             });
         };
 
-        // Автоматический вход при открытии вкладки
         onAuthStateChanged(auth, async (user) => {
             if (user) {
                 currentUser = user;
                 document.getElementById('authSection').style.display = 'none';
                 document.getElementById('mainApp').style.display = 'block';
                 document.getElementById('userDisplay').innerText = user.email;
-                records = []; 
                 await loadCloudData();
             } else {
                 currentUser = null;
-                records = [];
                 document.getElementById('authSection').style.display = 'block';
                 document.getElementById('mainApp').style.display = 'none';
             }
@@ -207,6 +199,7 @@
         };
 
         function updateUI(sync) {
+            // Для логики и графика всегда сортируем по дате (от старых к новым)
             records.sort((a, b) => new Date(a.date) - new Date(b.date));
             renderTable();
             renderChart();
@@ -219,15 +212,18 @@
             const tbody = document.getElementById('tableBody');
             tbody.innerHTML = '';
             
-            let sortedByDate = [...records].sort((a, b) => new Date(a.date) - new Date(b.date));
-            let dataWithGrowth = sortedByDate.map((r, i) => {
-                let growth = i > 0 ? r.trophies - sortedByDate[i-1].trophies : 0;
+            // Расчет прироста (всегда на основе хронологии)
+            let sortedChronologically = [...records].sort((a, b) => new Date(a.date) - new Date(b.date));
+            let dataWithGrowth = sortedChronologically.map((r, i) => {
+                let growth = i > 0 ? r.trophies - sortedChronologically[i-1].trophies : 0;
                 let growthText = i === 0 ? 'Старт' : (growth > 0 ? '+' + growth : growth);
                 return { ...r, growth, growthText };
             });
 
+            // Применяем выбранную сортировку для таблицы
             const sortVal = document.getElementById('sortSelect').value;
-            if (sortVal === 'date_desc') dataWithGrowth.reverse();
+            if (sortVal === 'date_desc') dataWithGrowth.sort((a, b) => new Date(b.date) - new Date(a.date));
+            else if (sortVal === 'date_asc') dataWithGrowth.sort((a, b) => new Date(a.date) - new Date(b.date));
             else if (sortVal === 'growth_desc') dataWithGrowth.sort((a, b) => b.growth - a.growth);
             else if (sortVal === 'growth_asc') dataWithGrowth.sort((a, b) => a.growth - b.growth);
 
@@ -250,10 +246,13 @@
         }
 
         function renderChart() {
-            const ctx = document.getElementById('progressChart').getContext('2d');
+            const canvas = document.getElementById('progressChart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
             if (chartInstance) chartInstance.destroy();
             if (records.length === 0) return;
 
+            // График всегда слева направо (от старых к новым)
             let sorted = [...records].sort((a, b) => new Date(a.date) - new Date(b.date));
 
             chartInstance = new Chart(ctx, {
@@ -283,6 +282,8 @@
             });
         }
 
+        // Слушатель смены сортировки
+        document.getElementById('sortSelect').addEventListener('change', renderTable);
         document.getElementById('dateInput').valueAsDate = new Date();
     </script>
 </body>
