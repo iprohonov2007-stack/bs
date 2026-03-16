@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brawl Stars Tracker</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 { text-align: center; color: #fbc02d; }
+        .card {
+            background: #1e1e1e;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .input-group {
+            display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap;
+        }
+        input, button, select {
+            padding: 10px; border: none; border-radius: 6px; font-size: 16px;
+        }
+        input { background: #2c2c2c; color: #fff; flex: 1; min-width: 150px;}
+        select { background: #2c2c2c; color: #fff; cursor: pointer; }
+        button {
+            background: #fbc02d; color: #000; font-weight: bold;
+            cursor: pointer; transition: 0.2s;
+        }
+        button:hover { background: #f9a825; }
+        
+        .btn-edit { background: #29b6f6; color: #000; padding: 5px 10px; font-size: 14px; border-radius: 4px; cursor: pointer; border: none; font-weight: bold; }
+        .btn-delete { background: #ef5350; color: #fff; padding: 5px 10px; font-size: 14px; border-radius: 4px; cursor: pointer; border: none; font-weight: bold; }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #333; }
+        th { color: #fbc02d; }
+        .positive { color: #66bb6a; font-weight: bold; }
+        .negative { color: #ef5350; font-weight: bold; }
+        .neutral { color: #9e9e9e; }
+        
+        #authSection { text-align: center; }
+        #mainApp { display: none; }
+        .user-info { text-align: right; margin-bottom: 10px; font-size: 14px; color: #aaa; }
+    </style>
+</head>
+<body>
+
+    <h1>🏆 BS Trophy Tracker</h1>
+
+    <div id="authSection" class="card">
+        <h3>Вход для синхронизации</h3>
+        <div class="input-group">
+            <input type="email" id="email" placeholder="Эл. почта">
+            <input type="password" id="pass" placeholder="Пароль">
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: center;">
+            <button onclick="handleAuth('login')">Войти</button>
+            <button onclick="handleAuth('reg')" style="background: #555; color: white;">Создать аккаунт</button>
+        </div>
+    </div>
+
+    <div id="mainApp">
+        <div class="user-info">
+            Логин: <span id="userDisplay" style="color: #fbc02d;"></span> | 
+            <a href="#" onclick="logout()" style="color: #ef5350; text-decoration: none;">Выйти</a>
+        </div>
+
+        <div class="card">
+            <div class="input-group">
+                <input type="date" id="dateInput">
+                <input type="number" id="trophyInput" placeholder="Кол-во кубков">
+                <button onclick="saveRecord()">Сохранить</button>
+            </div>
+            <p style="font-size: 12px; color: #888; margin: 0;">*Если выбрать существующую дату, запись обновится.</p>
+        </div>
+
+        <div class="card">
+            <canvas id="progressChart"></canvas>
+        </div>
+
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h3 style="margin: 0;">История пуша</h3>
+                <select id="sortSelect" onchange="renderTable()">
+                    <option value="date_desc">По дате (Сначала новые)</option>
+                    <option value="date_asc">По дате (Сначала старые)</option>
+                    <option value="growth_desc">По приросту (От большего)</option>
+                    <option value="growth_asc">По приросту (От меньшего)</option>
+                </select>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Дата</th>
+                        <th>Кубки</th>
+                        <th>Прирост</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyATU1FSu1tppbUO1-rNXxRZ_HFFI2n4M9M",
+            authDomain: "brawlstats-aa253.firebaseapp.com",
+            projectId: "brawlstats-aa253",
+            storageBucket: "brawlstats-aa253.firebasestorage.app",
+            messagingSenderId: "743221831588",
+            appId: "1:743221831588:web:5656bfc0534fa61f368331"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        let records = [];
+        let chartInstance = null;
+        let currentUser = null;
+
+        // Авторизация с сохранением сессии
+        window.handleAuth = async (type) => {
+            const email = document.getElementById('email').value;
+            const pass = document.getElementById('pass').value;
+            if(!email || !pass) return alert("Введите почту и пароль");
+            
+            try {
+                // Заставляем Firebase запомнить нас в этом браузере
+                await setPersistence(auth, browserLocalPersistence);
+                
+                if(type === 'login') await signInWithEmailAndPassword(auth, email, pass);
+                else await createUserWithEmailAndPassword(auth, email, pass);
+            } catch (e) { alert("Ошибка: " + e.message); }
+        };
+
+        window.logout = () => {
+            signOut(auth).then(() => {
+                records = [];
+                renderTable();
+                renderChart();
+            });
+        };
+
+        // Автоматический вход при открытии вкладки
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                currentUser = user;
+                document.getElementById('authSection').style.display = 'none';
+                document.getElementById('mainApp').style.display = 'block';
+                document.getElementById('userDisplay').innerText = user.email;
+                records = []; 
+                await loadCloudData();
+            } else {
+                currentUser = null;
+                records = [];
+                document.getElementById('authSection').style.display = 'block';
+                document.getElementById('mainApp').style.display = 'none';
+            }
+        });
+
+        async function loadCloudData() {
+            const docSnap = await getDoc(doc(db, "users", currentUser.uid));
+            if (docSnap.exists()) {
+                records = docSnap.data().records || [];
+            }
+            updateUI(false);
+        }
+
+        window.saveRecord = async () => {
+            const date = document.getElementById('dateInput').value;
+            const trophies = parseInt(document.getElementById('trophyInput').value);
+            if (!date || isNaN(trophies)) return;
+
+            const idx = records.findIndex(r => r.date === date);
+            if (idx >= 0) records[idx].trophies = trophies;
+            else records.push({ date, trophies });
+
+            updateUI(true);
+            document.getElementById('trophyInput').value = '';
+        };
+
+        window.deleteRecord = (date) => {
+            if(confirm("Удалить запись?")) {
+                records = records.filter(r => r.date !== date);
+                updateUI(true);
+            }
+        };
+
+        window.editRecord = (date, trophies) => {
+            document.getElementById('dateInput').value = date;
+            document.getElementById('trophyInput').value = trophies;
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        };
+
+        function updateUI(sync) {
+            records.sort((a, b) => new Date(a.date) - new Date(b.date));
+            renderTable();
+            renderChart();
+            if(sync && currentUser) {
+                setDoc(doc(db, "users", currentUser.uid), { records });
+            }
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+            
+            let sortedByDate = [...records].sort((a, b) => new Date(a.date) - new Date(b.date));
+            let dataWithGrowth = sortedByDate.map((r, i) => {
+                let growth = i > 0 ? r.trophies - sortedByDate[i-1].trophies : 0;
+                let growthText = i === 0 ? 'Старт' : (growth > 0 ? '+' + growth : growth);
+                return { ...r, growth, growthText };
+            });
+
+            const sortVal = document.getElementById('sortSelect').value;
+            if (sortVal === 'date_desc') dataWithGrowth.reverse();
+            else if (sortVal === 'growth_desc') dataWithGrowth.sort((a, b) => b.growth - a.growth);
+            else if (sortVal === 'growth_asc') dataWithGrowth.sort((a, b) => a.growth - b.growth);
+
+            dataWithGrowth.forEach(r => {
+                const tr = document.createElement('tr');
+                let gClass = r.growth > 0 ? 'positive' : (r.growth < 0 ? 'negative' : 'neutral');
+                if(r.growthText === 'Старт') gClass = 'neutral';
+
+                tr.innerHTML = `
+                    <td>${new Date(r.date).toLocaleDateString('ru-RU')}</td>
+                    <td style="font-weight:bold;">${r.trophies} 🏆</td>
+                    <td class="${gClass}">${r.growthText}</td>
+                    <td>
+                        <button class="btn-edit" onclick="editRecord('${r.date}', ${r.trophies})">Изменить</button>
+                        <button class="btn-delete" onclick="deleteRecord('${r.date}')">✖</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function renderChart() {
+            const ctx = document.getElementById('progressChart').getContext('2d');
+            if (chartInstance) chartInstance.destroy();
+            if (records.length === 0) return;
+
+            let sorted = [...records].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: sorted.map(r => new Date(r.date).toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit'})),
+                    datasets: [{
+                        label: 'Кубки',
+                        data: sorted.map(r => r.trophies),
+                        borderColor: '#fbc02d',
+                        backgroundColor: 'rgba(251, 192, 45, 0.2)',
+                        borderWidth: 3,
+                        pointBackgroundColor: '#fff',
+                        pointRadius: 5,
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { grid: {color: '#333'}, ticks: {color: '#ccc'} },
+                        x: { grid: {color: '#333'}, ticks: {color: '#ccc'} }
+                    }
+                }
+            });
+        }
+
+        document.getElementById('dateInput').valueAsDate = new Date();
+    </script>
+</body>
+</html>
